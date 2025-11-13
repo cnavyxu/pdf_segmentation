@@ -1,66 +1,119 @@
+# 导入 copy 模块，用于对象拷贝
 import copy
+# 导入 time 模块，用于时间相关操作
 import time
 
+# 导入表格标签和距离配置
 from utils.table_predict.utils.local_settings import BORDERLESS_LABEL, LINED_LABEL, DIST_DICT, DIST_WHITE
+# 导入表格位置检测模块
 from utils.table_predict.predict.predict_location import TABLE_LOCATION
+# 导入无线表格结构识别模块
 from utils.table_predict.predict.predict_structure_borderless import TABLE_STRUCT_BORDERLESS
+# 导入有线表格结构识别模块
 from utils.table_predict.predict.predict_structure_lined import TABLE_STRUCT_LINED
+# 导入有线表格后处理模块
 from utils.table_predict.structure_lined_postprocessing import lined_postprocessing, p_bbox2structure
+# 导入无线表格后处理模块
 from utils.table_predict.structure_borderless_postprocessing import borderless_postprocessing, \
     p_slanet_aligning
+# 导入工具函数模块
 from utils.table_predict.utils import slanet_html_function, generate_function, p_pts_rect2poly
+# 导入工具类
 from utils.table_predict.utils.ttb_utils_ym import *
 
 
 def fix_min_len_resize(img, min_l, max_len=2500):
+    """
+    按最小边长调整图像大小
+    
+    参数:
+        img: 输入图像
+        min_l: 最小边长
+        max_len: 最大边长，默认 2500
+    
+    返回:
+        res_img: 调整大小后的图像
+        res_ratio: 缩放比例 (width_ratio, height_ratio)
+    """
+    # 获取图像的高度和宽度
     h, w = img.shape[0:2]
+    # 计算基于最小边长的缩放比例
     ratio = float(min_l) / min(h, w)
+    # 限制最大边长不超过 max_len
     ratio = min(max_len / max(h, w), ratio)
+    # 计算新的高度和宽度
     new_h, new_w = int(ratio * h), int(ratio * w)
+    # 调整图像大小
     res_img = cv2.resize(img, (new_w, new_h))
+    # 计算缩放比例
     res_ratio = (float(w) / new_w, float(h) / new_h)
+    # 返回调整后的图像和缩放比例
     return res_img, res_ratio
 
 
 class TABLE():
+    """表格识别主类"""
+    
     def __init__(self, gpu_id, location_model_path, struct_lined_model_path):
-        # 检测表格位置
+        """
+        初始化表格识别器
+        
+        参数:
+            gpu_id: GPU 设备 ID
+            location_model_path: 表格位置检测模型路径
+            struct_lined_model_path: 有线表格结构识别模型路径
+        """
+        # 初始化表格位置检测器
         self.table_location = TABLE_LOCATION(
             gpu_id=gpu_id, model_path=location_model_path)
-        # 识别无线表格
+        # 备用：识别无线表格
         # self.table_struct_borderless = TABLE_STRUCT_BORDERLESS(
         #     gpu_id=gpu_id,
         #     model_path=struct_borderless_model_path,
         #     table_max_len=table_max_len,
         #     table_char_dict_path=table_char_dict_path,
         # )
-        # 识别有线表格
+        # 初始化有线表格结构识别器
         self.table_struct_lined = TABLE_STRUCT_LINED(
             gpu_id=gpu_id, model_path=struct_lined_model_path)
-        
+        # 测试模式标志
         self.test = False
                 
     def merge(self, table_points, cut_points_list, dist_):
-        '''
+        """
+        将截取表格中的单元格坐标转换为原图坐标
         
-        :param table_points: 表格在原图中的顶点坐标
-        :param cut_points_list: 单元格在截取表格图中的坐标
-        :param dist_: 截取表格时额外截取的边框宽度，以前有线是64，现在无线用0
-        :return: 单元格在原图中的坐标
-        '''
+        参数:
+            table_points: 表格在原图中的顶点坐标
+            cut_points_list: 单元格在截取表格图中的坐标列表
+            dist_: 截取表格时额外截取的边框宽度（有线表格为 64，无线表格为 0）
         
+        返回:
+            cell_bbox_list: 单元格在原图中的坐标列表
+        """
+        # 获取表格在原图中的最小 X 坐标
         min_w = min([pt[0] for pt in table_points])
+        # 获取表格在原图中的最小 Y 坐标
         min_h = min([pt[1] for pt in table_points])
+        # 设置宽度边距
         dist_iw = dist_
+        # 设置高度边距
         dist_ih = dist_
 
+        # 计算截取区域的起始 X 坐标（不小于 0）
         cut_iw = max(min_w - dist_iw, 0)
+        # 计算截取区域的起始 Y 坐标（不小于 0）
         cut_ih = max(min_h - dist_ih, 0)
 
+        # 初始化单元格坐标列表
         cell_bbox_list = []
+        # 遍历所有单元格坐标
         for cut_index, cut_bbox in enumerate(cut_points_list):
+            # 将截取图中的坐标转换为原图坐标
             cell_bbox = [[pt[0] + cut_iw, pt[1] + cut_ih] for pt in cut_bbox]
+            # 添加到结果列表
             cell_bbox_list.append(cell_bbox)
+        # 返回转换后的坐标列表
         return cell_bbox_list
 
     def table_predict(self, img, res_ocr_i=None):
